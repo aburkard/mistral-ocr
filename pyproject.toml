@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mistral-ocr"
+version = "0.1.0"
+description = "Process documents using Mistral OCR API"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+dependencies = [
+    "mistralai",
+    "python-dotenv",
+    "validators",
+]
+
+[project.scripts]
+mistral-ocr = "mistral_ocr:main" 
