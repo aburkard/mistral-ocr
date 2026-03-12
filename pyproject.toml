@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mistral-ocr-tool"
-version = "0.1.0"
+version = "1.0.0"
 description = "A simple CLI to extract text from documents using the Mistral OCR API."
 readme = "README.md"
 requires-python = ">=3.9"
