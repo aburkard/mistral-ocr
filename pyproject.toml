@@ -3,17 +3,28 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mistral-ocr"
+name = "mistral-ocr-tool"
 version = "0.1.0"
-description = "Process documents using Mistral OCR API"
+description = "A simple CLI to extract text from documents using the Mistral OCR API."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = {text = "MIT"}
+authors = [{name = "aburkard"}]
 dependencies = [
     "mistralai",
     "python-dotenv",
-    "validators",
+    "pypdf",
 ]
 
 [project.scripts]
-mistral-ocr = "mistral_ocr:main" 
+mistral-ocr = "mistral_ocr:main"
+
+[project.urls]
+Repository = "https://github.com/aburkard/mistral-ocr"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+only-include = ["mistral_ocr.py"]
+
+[dependency-groups]
+dev = ["pytest"]

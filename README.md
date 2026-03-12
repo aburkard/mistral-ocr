@@ -1,60 +1,85 @@
-# Mistral OCR Document Processor
+# Mistral OCR
 
-A command-line tool to process documents using the Mistral AI OCR API.
+A simple CLI to extract text from documents using the Mistral OCR API.
 
 ## Installation
 
-### Option 1: Install from Source
-
 ```bash
-git clone https://github.com/yourusername/mistral-ocr.git
-cd mistral-ocr
 pip install .
 ```
 
-### Option 2: Install in Development Mode
+Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/yourusername/mistral-ocr.git
-cd mistral-ocr
-pip install -e .
+uv sync
 ```
 
 ## Configuration
 
-Create a `.env` file in your working directory with your Mistral API key:
+Set your Mistral API key as an environment variable or in a `.env` file:
 
 ```
-MISTRAL_API_KEY="YOUR_MISTRAL_API_KEY_HERE"
+MISTRAL_API_KEY="your-api-key"
 ```
 
 ## Usage
 
-After installation, you can run the tool from anywhere:
-
 ```bash
-mistral-ocr <document_source> [-v/--verbose]
+mistral-ocr <document_source> [options]
 ```
 
-Replace `<document_source>` with either:
-
-- A URL to the document (e.g., `https://example.com/document.pdf`)
-- A local file path (e.g., `./my_document.png`)
+The document source can be a URL, a local file path, or `-` to read from stdin.
 
 ### Examples
 
-Process a document from a URL:
-
 ```bash
-mistral-ocr https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf
+# Process a PDF from a URL
+mistral-ocr https://example.com/document.pdf
+
+# Process a local file
+mistral-ocr ./invoice.pdf
+
+# Pipe from stdin
+cat document.pdf | mistral-ocr -
+
+# Process specific pages only (0-indexed)
+mistral-ocr large-doc.pdf --pages 0,2,5
+
+# Output as JSON (great for piping to jq)
+mistral-ocr document.pdf --json | jq '.pages[0].markdown'
+
+# Extract tables as HTML
+mistral-ocr document.pdf --table-format html
+
+# Include headers and footers
+mistral-ocr document.pdf --extract-headers --extract-footers
+
+# Include base64-encoded images in response
+mistral-ocr document.pdf --include-images
+
+# Check page count and estimated cost before processing
+mistral-ocr large-doc.pdf --dry-run
 ```
 
-Process a local file with verbose logging:
+### Options
+
+| Option | Description |
+|---|---|
+| `-p, --pages` | Comma-separated page numbers to process (0-indexed) |
+| `--json` | Output full JSON response instead of markdown |
+| `--table-format` | Table output format: `markdown` or `html` |
+| `--extract-headers` | Include page headers |
+| `--extract-footers` | Include page footers |
+| `--include-images` | Include base64-encoded images in response |
+| `--image-limit N` | Maximum number of images to extract |
+| `--image-min-size N` | Minimum image dimension in pixels |
+| `--model NAME` | Model override (default: `mistral-ocr-latest`) |
+| `--dry-run` | Show page count and estimated cost without processing |
+| `-v, --verbose` | Enable verbose logging |
+
+## Development
 
 ```bash
-mistral-ocr ./invoices/invoice_march.pdf --verbose
+uv sync --group dev
+uv run pytest tests/
 ```
-
-## Output
-
-The tool prints the extracted text from the document in Markdown format.
