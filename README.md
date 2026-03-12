@@ -1,17 +1,21 @@
 # Mistral OCR
 
+[![PyPI](https://img.shields.io/pypi/v/mistral-ocr-tool)](https://pypi.org/project/mistral-ocr-tool/)
+
 A simple CLI to extract text from documents using the Mistral OCR API.
 
 ## Installation
 
 ```bash
-pip install .
+pip install mistral-ocr-tool
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
+Or install from source:
 
 ```bash
-uv sync
+git clone https://github.com/aburkard/mistral-ocr.git
+cd mistral-ocr
+pip install .
 ```
 
 ## Configuration
