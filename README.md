@@ -58,8 +58,11 @@ mistral-ocr document.pdf --table-format html
 # Include headers and footers
 mistral-ocr document.pdf --extract-headers --extract-footers
 
-# Include base64-encoded images in response
-mistral-ocr document.pdf --include-images
+# Save markdown and images to a directory
+mistral-ocr document.pdf -o output/
+
+# Include base64 images in JSON output (for programmatic use)
+mistral-ocr document.pdf --json --include-images
 
 # Check page count and estimated cost before processing
 mistral-ocr large-doc.pdf --dry-run
@@ -71,10 +74,11 @@ mistral-ocr large-doc.pdf --dry-run
 |---|---|
 | `-p, --pages` | Comma-separated page numbers to process (0-indexed) |
 | `--json` | Output full JSON response instead of markdown |
+| `-o, --output-dir` | Save markdown and images to a directory |
 | `--table-format` | Table output format: `markdown` or `html` |
 | `--extract-headers` | Include page headers |
 | `--extract-footers` | Include page footers |
-| `--include-images` | Include base64-encoded images in response |
+| `--include-images` | Include images (requires `--json` or `-o`) |
 | `--image-limit N` | Maximum number of images to extract |
 | `--image-min-size N` | Minimum image dimension in pixels |
 | `--model NAME` | Model override (default: `mistral-ocr-latest`) |

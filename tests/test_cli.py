@@ -5,7 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mistral_ocr import is_url, parse_pages, build_ocr_params, count_pages, main
+from mistral_ocr import (
+    is_url, parse_pages, build_ocr_params, count_pages,
+    get_doc_stem, save_to_directory, main,
+)
 
 
 class TestIsUrl:
@@ -55,6 +58,7 @@ class TestBuildOcrParams:
             "extract_headers": False,
             "extract_footers": False,
             "include_images": False,
+            "output_dir": None,
             "image_limit": None,
             "image_min_size": None,
         }
@@ -98,6 +102,10 @@ class TestBuildOcrParams:
     def test_custom_model(self):
         params = build_ocr_params(self._make_args(model="mistral-ocr-2512"))
         assert params["model"] == "mistral-ocr-2512"
+
+    def test_output_dir_implies_include_images(self):
+        params = build_ocr_params(self._make_args(output_dir="out/"))
+        assert params["include_image_base64"] is True
 
 
 class TestMainOutput:
@@ -252,3 +260,111 @@ class TestDryRun:
         captured = capsys.readouterr()
         assert "Pages: 3" in captured.out
         assert "Estimated cost: $0.0060" in captured.out
+
+
+class TestGetDocStem:
+    def test_local_file(self):
+        assert get_doc_stem("/path/to/report.pdf") == "report"
+
+    def test_url(self):
+        assert get_doc_stem("https://example.com/docs/paper.pdf") == "paper"
+
+    def test_stdin(self):
+        assert get_doc_stem("-") == "stdin"
+
+    def test_url_no_extension(self):
+        assert get_doc_stem("https://example.com/document") == "document"
+
+
+class TestSaveToDirectory:
+    def _mock_response_with_images(self):
+        import base64
+        img_data = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
+
+        img = MagicMock()
+        img.id = "img-0.png"
+        img.image_base64 = img_data
+
+        page = MagicMock()
+        page.markdown = "# Title\n![img-0.png](img-0.png)\nSome text"
+        page.images = [img]
+
+        response = MagicMock()
+        response.pages = [page]
+        return response
+
+    def _mock_response_no_images(self):
+        page = MagicMock()
+        page.markdown = "# Title\nJust text"
+        page.images = []
+
+        response = MagicMock()
+        response.pages = [page]
+        return response
+
+    def test_saves_markdown(self, tmp_path):
+        response = self._mock_response_no_images()
+        md_path = save_to_directory(str(tmp_path / "out"), response, "doc")
+        assert md_path.exists()
+        assert md_path.name == "doc.md"
+        assert "Just text" in md_path.read_text()
+
+    def test_saves_images(self, tmp_path):
+        response = self._mock_response_with_images()
+        md_path = save_to_directory(str(tmp_path / "out"), response, "doc")
+        images_dir = tmp_path / "out" / "images"
+        assert images_dir.exists()
+        assert (images_dir / "img-0.png").exists()
+
+    def test_fixes_image_refs_in_markdown(self, tmp_path):
+        response = self._mock_response_with_images()
+        md_path = save_to_directory(str(tmp_path / "out"), response, "doc")
+        content = md_path.read_text()
+        assert "](images/img-0.png)" in content
+        assert "](img-0.png)" not in content
+
+
+class TestIncludeImagesValidation:
+    def test_include_images_without_json_or_output_dir_errors(self):
+        with pytest.raises(SystemExit):
+            with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--include-images"]):
+                main()
+
+    @patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"})
+    @patch("mistral_ocr.Mistral")
+    def test_include_images_with_json_ok(self, mock_mistral_cls, capsys):
+        mock_client = MagicMock()
+        mock_mistral_cls.return_value = mock_client
+        page = MagicMock()
+        page.markdown = "text"
+        page.images = []
+        response = MagicMock()
+        response.pages = [page]
+        response.model_dump.return_value = {"pages": [], "model": "m"}
+        mock_client.ocr.process.return_value = response
+
+        with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--json", "--include-images"]):
+            main()
+
+        captured = capsys.readouterr()
+        assert "pages" in captured.out
+
+    @patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"})
+    @patch("mistral_ocr.Mistral")
+    def test_output_dir_mode(self, mock_mistral_cls, tmp_path, capsys):
+        mock_client = MagicMock()
+        mock_mistral_cls.return_value = mock_client
+        page = MagicMock()
+        page.markdown = "# Hello"
+        page.images = []
+        response = MagicMock()
+        response.pages = [page]
+        mock_client.ocr.process.return_value = response
+
+        out_dir = str(tmp_path / "result")
+        with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "-o", out_dir]):
+            main()
+
+        captured = capsys.readouterr()
+        assert "doc.md" in captured.out
+        assert (tmp_path / "result" / "doc.md").exists()
