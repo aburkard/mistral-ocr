@@ -215,7 +215,7 @@ def render_html_to_pdf(source, timeout_seconds=30):
             browser = p.chromium.launch()
             try:
                 page = browser.new_page()
-                page.goto(target, wait_until="load", timeout=timeout_seconds * 1000)
+                page.goto(target, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
                 try:
                     page.wait_for_load_state("networkidle", timeout=5000)
                 except PlaywrightError:
@@ -230,7 +230,8 @@ def render_html_to_pdf(source, timeout_seconds=30):
         except OSError:
             pass
         logging.error(f"Failed to render HTML to PDF: {exc}")
-        logging.error("If Chromium is not installed, run `python -m playwright install chromium`.")
+        if "Executable doesn't exist" in str(exc):
+            logging.error("Run `python -m playwright install chromium` to install Chromium.")
         sys.exit(1)
 
     logging.info(f"Rendered HTML to temporary PDF: {pdf_path}")
