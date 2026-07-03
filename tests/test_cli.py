@@ -92,10 +92,27 @@ class TestHtmlRendering:
         with patch("mistral_ocr.url_content_type", return_value="application/pdf"):
             assert should_render_html("https://example.com/report", "auto") is False
 
+    def test_should_render_url_with_unknown_content_type_and_no_extension(self):
+        with patch("mistral_ocr.url_content_type", return_value=None):
+            assert should_render_html("https://news.ycombinator.com", "auto") is True
+
+    def test_should_not_render_direct_document_url_extension(self):
+        with patch("mistral_ocr.url_content_type") as mock_content_type:
+            assert should_render_html("https://example.com/report.pdf", "auto") is False
+        mock_content_type.assert_not_called()
+
+    def test_should_not_render_direct_document_content_type_without_extension(self):
+        with patch("mistral_ocr.url_content_type", return_value="application/pdf"):
+            assert should_render_html("https://example.com/report", "auto") is False
+
     def test_bare_url_uses_content_type_after_normalization(self):
         with patch("mistral_ocr.url_content_type", return_value="text/html") as mock_content_type:
             assert should_render_html(normalize_document_source("espn.com"), "auto") is True
         mock_content_type.assert_called_once_with("https://espn.com")
+
+    def test_bare_url_renders_when_content_type_probe_fails(self):
+        with patch("mistral_ocr.url_content_type", return_value=None):
+            assert should_render_html("news.ycombinator.com", "auto") is True
 
     def test_build_document_accepts_bare_url(self):
         document = build_document(MagicMock(), "espn.com", render_html="never")

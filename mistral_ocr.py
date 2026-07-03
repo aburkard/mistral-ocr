@@ -28,6 +28,17 @@ LOCAL_FILE_EXTENSIONS = {
     ".jpg", ".json", ".md", ".pdf", ".png", ".ppt", ".pptx", ".tif", ".tiff",
     ".txt", ".webp", ".xls", ".xlsx",
 }
+DIRECT_URL_EXTENSIONS = LOCAL_FILE_EXTENSIONS - {".htm", ".html"}
+URL_REQUEST_HEADERS = {"User-Agent": "mistral-ocr/1.1"}
+DIRECT_CONTENT_TYPES = {
+    "application/pdf",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 def looks_like_bare_url(source):
@@ -127,17 +138,32 @@ def is_html_path(source):
 
 def url_content_type(url):
     """Best-effort content type lookup for deciding whether a URL is HTML."""
-    try:
-        req = Request(url, method="HEAD")
-        with urlopen(req, timeout=10) as resp:
-            return resp.headers.get_content_type()
-    except Exception as exc:
-        logging.info(f"Could not detect content type for {url}: {exc}")
-        return None
+    for method in ("HEAD", "GET"):
+        try:
+            headers = dict(URL_REQUEST_HEADERS)
+            if method == "GET":
+                headers["Range"] = "bytes=0-0"
+            req = Request(url, headers=headers, method=method)
+            with urlopen(req, timeout=10) as resp:
+                return resp.headers.get_content_type()
+        except Exception as exc:
+            logging.info(f"Could not detect content type for {url} with {method}: {exc}")
+    return None
+
+
+def url_path_extension(url):
+    """Return the lower-case extension from a URL path."""
+    return Path(urlparse(url).path).suffix.lower()
+
+
+def is_direct_document_content_type(content_type):
+    """Return True when a URL content type should be passed directly to OCR."""
+    return content_type in DIRECT_CONTENT_TYPES or content_type.startswith("image/")
 
 
 def should_render_html(source, render_html):
     """Decide whether the source should be rendered to PDF before OCR."""
+    source = normalize_document_source(source)
     if render_html == "never":
         return False
     if render_html == "always":
@@ -147,7 +173,15 @@ def should_render_html(source, render_html):
     if is_html_path(source):
         return True
     if is_url(source):
-        return url_content_type(source) == "text/html"
+        ext = url_path_extension(source)
+        if ext in DIRECT_URL_EXTENSIONS:
+            return False
+        content_type = url_content_type(source)
+        if content_type == "text/html":
+            return True
+        if content_type is None:
+            return True
+        return not is_direct_document_content_type(content_type)
     return False
 
 
