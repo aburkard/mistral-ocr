@@ -39,7 +39,7 @@ MISTRAL_API_KEY="your-api-key"
 mistral-ocr <document_source> [options]
 ```
 
-The document source can be a URL, a local file path, or `-` to read from stdin.
+The document source can be a URL, a bare domain URL, a local file path, or `-` to read from stdin. Bare domain URLs such as `example.com/report` are treated as `https://example.com/report`.
 
 ### Examples
 
@@ -55,6 +55,9 @@ mistral-ocr ./report.html
 
 # Render an HTML page URL to PDF before OCR
 mistral-ocr https://example.com/report
+
+# URLs can omit https://
+mistral-ocr example.com/report
 
 # Pipe from stdin
 cat document.pdf | mistral-ocr -

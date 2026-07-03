@@ -23,6 +23,39 @@ def is_url(s):
     return parsed.scheme in ("http", "https")
 
 
+LOCAL_FILE_EXTENSIONS = {
+    ".avif", ".bmp", ".csv", ".doc", ".docx", ".gif", ".htm", ".html", ".jpeg",
+    ".jpg", ".json", ".md", ".pdf", ".png", ".ppt", ".pptx", ".tif", ".tiff",
+    ".txt", ".webp", ".xls", ".xlsx",
+}
+
+
+def looks_like_bare_url(source):
+    """Return True for URL-looking inputs without an explicit scheme."""
+    if source == "-" or is_url(source) or os.path.exists(source):
+        return False
+    if "://" in source or source.startswith(("/", "./", "../", "~")):
+        return False
+    if any(char.isspace() for char in source):
+        return False
+
+    host = source.split("/", 1)[0]
+    if not host or "@" in host:
+        return False
+    if Path(host).suffix.lower() in LOCAL_FILE_EXTENSIONS:
+        return False
+
+    host_without_port = host.rsplit(":", 1)[0]
+    return "." in host_without_port or host_without_port == "localhost"
+
+
+def normalize_document_source(source):
+    """Normalize friendly CLI source forms before routing."""
+    if looks_like_bare_url(source):
+        return f"https://{source}"
+    return source
+
+
 def parse_pages(pages_str):
     """Parse a comma-separated list of 0-indexed page numbers."""
     pages = []
@@ -51,6 +84,7 @@ def upload_file(client, file_path, file_name=None):
 
 def build_document(client, source, render_html="auto", html_timeout=30):
     """Resolve a source (URL, file path, or '-' for stdin) into an API document dict."""
+    source = normalize_document_source(source)
     if should_render_html(source, render_html):
         pdf_path = render_html_to_pdf(source, timeout_seconds=html_timeout)
         try:
@@ -171,6 +205,7 @@ def render_html_to_pdf(source, timeout_seconds=30):
 
 def count_pages(source, pages_arg, render_html="auto", html_timeout=30):
     """Count pages that would be processed, without calling the API."""
+    source = normalize_document_source(source)
     if should_render_html(source, render_html):
         pdf_path = render_html_to_pdf(source, timeout_seconds=html_timeout)
         try:
@@ -224,6 +259,7 @@ def count_pages(source, pages_arg, render_html="auto", html_timeout=30):
 
 def get_doc_stem(source):
     """Get a filename stem from the document source for naming output files."""
+    source = normalize_document_source(source)
     if source == "-":
         return "stdin"
     if is_url(source):
@@ -303,6 +339,7 @@ def main():
         epilog="Examples:\n"
                "  mistral-ocr document.pdf\n"
                "  mistral-ocr https://example.com/doc.pdf\n"
+               "  mistral-ocr example.com/report\n"
                "  mistral-ocr doc.pdf --pages 0,2,5\n"
                "  mistral-ocr doc.pdf --json | jq '.pages[0].markdown'\n"
                "  mistral-ocr doc.pdf -o output/\n"
@@ -312,7 +349,7 @@ def main():
     )
     parser.add_argument(
         "document_source",
-        help="URL, file path, or '-' to read from stdin.",
+        help="URL, bare domain URL, file path, or '-' to read from stdin.",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",

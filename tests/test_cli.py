@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mistral_ocr import (
-    is_url, is_html_path, should_render_html, parse_pages,
-    build_document, build_ocr_params, count_pages, get_doc_stem,
-    save_to_directory, main,
+    is_url, looks_like_bare_url, normalize_document_source, is_html_path,
+    should_render_html, parse_pages, build_document, build_ocr_params,
+    count_pages, get_doc_stem, save_to_directory, main,
 )
 
 
@@ -30,6 +30,30 @@ class TestIsUrl:
 
     def test_ftp(self):
         assert is_url("ftp://example.com/doc.pdf") is False
+
+
+class TestNormalizeDocumentSource:
+    def test_bare_domain(self):
+        assert looks_like_bare_url("espn.com") is True
+        assert normalize_document_source("espn.com") == "https://espn.com"
+
+    def test_bare_domain_with_path(self):
+        assert looks_like_bare_url("example.com/report") is True
+        assert normalize_document_source("example.com/report") == "https://example.com/report"
+
+    def test_explicit_url_unchanged(self):
+        assert normalize_document_source("http://example.com") == "http://example.com"
+        assert normalize_document_source("https://example.com") == "https://example.com"
+
+    def test_missing_local_html_is_not_bare_url(self):
+        assert looks_like_bare_url("report.html") is False
+        assert normalize_document_source("report.html") == "report.html"
+
+    def test_local_file_is_not_bare_url(self, tmp_path):
+        local_file = tmp_path / "espn.com"
+        local_file.write_text("content")
+        assert looks_like_bare_url(str(local_file)) is False
+        assert normalize_document_source(str(local_file)) == str(local_file)
 
 
 class TestParsePages:
@@ -67,6 +91,15 @@ class TestHtmlRendering:
             assert should_render_html("https://example.com/report", "auto") is True
         with patch("mistral_ocr.url_content_type", return_value="application/pdf"):
             assert should_render_html("https://example.com/report", "auto") is False
+
+    def test_bare_url_uses_content_type_after_normalization(self):
+        with patch("mistral_ocr.url_content_type", return_value="text/html") as mock_content_type:
+            assert should_render_html(normalize_document_source("espn.com"), "auto") is True
+        mock_content_type.assert_called_once_with("https://espn.com")
+
+    def test_build_document_accepts_bare_url(self):
+        document = build_document(MagicMock(), "espn.com", render_html="never")
+        assert document == {"type": "document_url", "document_url": "https://espn.com"}
 
     def test_build_document_renders_html_before_upload(self, tmp_path):
         html_path = tmp_path / "report.html"
