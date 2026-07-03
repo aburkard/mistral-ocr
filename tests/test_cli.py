@@ -6,8 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mistral_ocr import (
-    is_url, parse_pages, build_ocr_params, count_pages,
-    get_doc_stem, save_to_directory, main,
+    is_url, looks_like_bare_url, normalize_document_source, is_html_path,
+    should_render_html, parse_pages, build_document, build_ocr_params,
+    count_pages, get_doc_stem, save_to_directory, main,
 )
 
 
@@ -31,6 +32,30 @@ class TestIsUrl:
         assert is_url("ftp://example.com/doc.pdf") is False
 
 
+class TestNormalizeDocumentSource:
+    def test_bare_domain(self):
+        assert looks_like_bare_url("espn.com") is True
+        assert normalize_document_source("espn.com") == "https://espn.com"
+
+    def test_bare_domain_with_path(self):
+        assert looks_like_bare_url("example.com/report") is True
+        assert normalize_document_source("example.com/report") == "https://example.com/report"
+
+    def test_explicit_url_unchanged(self):
+        assert normalize_document_source("http://example.com") == "http://example.com"
+        assert normalize_document_source("https://example.com") == "https://example.com"
+
+    def test_missing_local_html_is_not_bare_url(self):
+        assert looks_like_bare_url("report.html") is False
+        assert normalize_document_source("report.html") == "report.html"
+
+    def test_local_file_is_not_bare_url(self, tmp_path):
+        local_file = tmp_path / "espn.com"
+        local_file.write_text("content")
+        assert looks_like_bare_url(str(local_file)) is False
+        assert normalize_document_source(str(local_file)) == str(local_file)
+
+
 class TestParsePages:
     def test_single_page(self):
         assert parse_pages("0") == [0]
@@ -47,6 +72,92 @@ class TestParsePages:
     def test_invalid_raises(self):
         with pytest.raises(ValueError):
             parse_pages("abc")
+
+
+class TestHtmlRendering:
+    def test_is_html_path(self):
+        assert is_html_path("report.html") is True
+        assert is_html_path("report.htm") is True
+        assert is_html_path("report.pdf") is False
+        assert is_html_path("https://example.com/report.html") is True
+
+    def test_should_render_html_modes(self):
+        assert should_render_html("report.html", "auto") is True
+        assert should_render_html("report.html", "never") is False
+        assert should_render_html("report.pdf", "always") is True
+
+    def test_should_render_html_uses_url_content_type(self):
+        with patch("mistral_ocr.url_content_type", return_value="text/html"):
+            assert should_render_html("https://example.com/report", "auto") is True
+        with patch("mistral_ocr.url_content_type", return_value="application/pdf"):
+            assert should_render_html("https://example.com/report", "auto") is False
+
+    def test_should_render_url_with_unknown_content_type_and_no_extension(self):
+        with patch("mistral_ocr.url_content_type", return_value=None):
+            assert should_render_html("https://news.ycombinator.com", "auto") is True
+
+    def test_should_not_render_direct_document_url_extension(self):
+        with patch("mistral_ocr.url_content_type") as mock_content_type:
+            assert should_render_html("https://example.com/report.pdf", "auto") is False
+        mock_content_type.assert_not_called()
+
+    def test_should_not_render_direct_document_content_type_without_extension(self):
+        with patch("mistral_ocr.url_content_type", return_value="application/pdf"):
+            assert should_render_html("https://example.com/report", "auto") is False
+
+    def test_bare_url_uses_content_type_after_normalization(self):
+        with patch("mistral_ocr.url_content_type", return_value="text/html") as mock_content_type:
+            assert should_render_html(normalize_document_source("espn.com"), "auto") is True
+        mock_content_type.assert_called_once_with("https://espn.com")
+
+    def test_bare_url_renders_when_content_type_probe_fails(self):
+        with patch("mistral_ocr.url_content_type", return_value=None):
+            assert should_render_html("news.ycombinator.com", "auto") is True
+
+    def test_build_document_accepts_bare_url(self):
+        document = build_document(MagicMock(), "espn.com", render_html="never")
+        assert document == {"type": "document_url", "document_url": "https://espn.com"}
+
+    def test_build_document_renders_html_before_upload(self, tmp_path):
+        html_path = tmp_path / "report.html"
+        html_path.write_text("<html><body>Hello</body></html>")
+        pdf_path = tmp_path / "rendered.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+
+        mock_client = MagicMock()
+        with patch("mistral_ocr.render_html_to_pdf", return_value=str(pdf_path)) as mock_render:
+            with patch("mistral_ocr.upload_file", return_value={"type": "document_url", "document_url": "signed"}) as mock_upload:
+                document = build_document(mock_client, str(html_path))
+
+        assert document == {"type": "document_url", "document_url": "signed"}
+        mock_render.assert_called_once_with(str(html_path), timeout_seconds=30)
+        mock_upload.assert_called_once()
+        assert mock_upload.call_args.kwargs["file_name"] == "report.pdf"
+        assert not pdf_path.exists()
+
+    def test_build_document_can_skip_html_rendering(self):
+        document = build_document(MagicMock(), "https://example.com/report.html", render_html="never")
+        assert document == {"type": "document_url", "document_url": "https://example.com/report.html"}
+
+    def test_count_pages_for_rendered_html(self, tmp_path):
+        from pypdf import PdfWriter
+
+        html_path = tmp_path / "report.html"
+        html_path.write_text("<html><body>Hello</body></html>")
+        pdf_path = tmp_path / "rendered.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.add_blank_page(width=72, height=72)
+        with open(pdf_path, "wb") as f:
+            writer.write(f)
+
+        with patch("mistral_ocr.render_html_to_pdf", return_value=str(pdf_path)):
+            assert count_pages(str(html_path), None) == 2
+        assert not pdf_path.exists()
+
+    def test_missing_local_html_exits_before_playwright_import(self):
+        with pytest.raises(SystemExit):
+            build_document(MagicMock(), "/tmp/does-not-exist.html")
 
 
 class TestBuildOcrParams:
@@ -331,6 +442,11 @@ class TestIncludeImagesValidation:
     def test_include_images_without_json_or_output_dir_errors(self):
         with pytest.raises(SystemExit):
             with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--include-images"]):
+                main()
+
+    def test_html_timeout_must_be_positive(self):
+        with pytest.raises(SystemExit):
+            with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--html-timeout", "0"]):
                 main()
 
     def test_image_limit_without_image_output_errors(self):
