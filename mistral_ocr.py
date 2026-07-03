@@ -8,6 +8,7 @@ import logging
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 try:
     from mistralai import Mistral
@@ -48,8 +49,16 @@ def upload_file(client, file_path, file_name=None):
     return {"type": "document_url", "document_url": signed.url}
 
 
-def build_document(client, source):
+def build_document(client, source, render_html="auto", html_timeout=30):
     """Resolve a source (URL, file path, or '-' for stdin) into an API document dict."""
+    if should_render_html(source, render_html):
+        pdf_path = render_html_to_pdf(source, timeout_seconds=html_timeout)
+        try:
+            file_name = f"{get_doc_stem(source)}.pdf"
+            return upload_file(client, pdf_path, file_name=file_name)
+        finally:
+            os.unlink(pdf_path)
+
     if source == "-":
         data = sys.stdin.buffer.read()
         if not data:
@@ -73,11 +82,103 @@ def build_document(client, source):
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".tif"}
+HTML_EXTENSIONS = {".html", ".htm"}
 
 
-def count_pages(source, pages_arg):
-    """Count pages that would be processed, without calling the API."""
+def is_html_path(source):
+    """Return True when a local path or URL path looks like HTML."""
+    path = urlparse(source).path if is_url(source) else source
+    return Path(path).suffix.lower() in HTML_EXTENSIONS
+
+
+def url_content_type(url):
+    """Best-effort content type lookup for deciding whether a URL is HTML."""
+    try:
+        req = Request(url, method="HEAD")
+        with urlopen(req, timeout=10) as resp:
+            return resp.headers.get_content_type()
+    except Exception as exc:
+        logging.info(f"Could not detect content type for {url}: {exc}")
+        return None
+
+
+def should_render_html(source, render_html):
+    """Decide whether the source should be rendered to PDF before OCR."""
+    if render_html == "never":
+        return False
+    if render_html == "always":
+        return True
     if source == "-":
+        return False
+    if is_html_path(source):
+        return True
+    if is_url(source):
+        return url_content_type(source) == "text/html"
+    return False
+
+
+def render_html_to_pdf(source, timeout_seconds=30):
+    """Render a local HTML file or URL to a temporary PDF path."""
+    if source == "-":
+        logging.error("HTML rendering is not supported for stdin.")
+        sys.exit(1)
+    if not is_url(source) and not os.path.exists(source):
+        logging.error(f"'{source}' is not a valid URL or an existing file path.")
+        sys.exit(1)
+
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        logging.error(
+            "HTML rendering requires Playwright. Install it with "
+            "`pip install 'mistral-ocr-tool[html]'` and then run "
+            "`python -m playwright install chromium`."
+        )
+        sys.exit(1)
+
+    target = source if is_url(source) else Path(source).resolve().as_uri()
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    pdf_path = tmp.name
+    tmp.close()
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            try:
+                page = browser.new_page()
+                page.goto(target, wait_until="load", timeout=timeout_seconds * 1000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except PlaywrightError:
+                    logging.info("Timed out waiting for network idle; rendering the loaded page.")
+                page.emulate_media(media="screen")
+                page.pdf(path=pdf_path, format="Letter", print_background=True)
+            finally:
+                browser.close()
+    except PlaywrightError as exc:
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
+        logging.error(f"Failed to render HTML to PDF: {exc}")
+        logging.error("If Chromium is not installed, run `python -m playwright install chromium`.")
+        sys.exit(1)
+
+    logging.info(f"Rendered HTML to temporary PDF: {pdf_path}")
+    return pdf_path
+
+
+def count_pages(source, pages_arg, render_html="auto", html_timeout=30):
+    """Count pages that would be processed, without calling the API."""
+    if should_render_html(source, render_html):
+        pdf_path = render_html_to_pdf(source, timeout_seconds=html_timeout)
+        try:
+            reader = PdfReader(pdf_path)
+            total = len(reader.pages)
+        finally:
+            os.unlink(pdf_path)
+    elif source == "-":
         data = sys.stdin.buffer.read()
         if not data:
             logging.error("No data received from stdin.")
@@ -93,9 +194,8 @@ def count_pages(source, pages_arg):
         if ext in IMAGE_EXTENSIONS:
             total = 1
         else:
-            import urllib.request
             logging.info(f"Downloading {source} to count pages...")
-            with urllib.request.urlopen(source, timeout=30) as resp:
+            with urlopen(source, timeout=30) as resp:
                 data = resp.read()
             try:
                 reader = PdfReader(io.BytesIO(data))
@@ -206,6 +306,7 @@ def main():
                "  mistral-ocr doc.pdf --pages 0,2,5\n"
                "  mistral-ocr doc.pdf --json | jq '.pages[0].markdown'\n"
                "  mistral-ocr doc.pdf -o output/\n"
+               "  mistral-ocr page.html\n"
                "  cat doc.pdf | mistral-ocr -\n",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -258,6 +359,14 @@ def main():
         help="Model to use (default: mistral-ocr-latest).",
     )
     parser.add_argument(
+        "--render-html", choices=["auto", "always", "never"], default="auto",
+        help="Render HTML inputs to PDF before OCR (default: auto).",
+    )
+    parser.add_argument(
+        "--html-timeout", type=int, default=30,
+        help="Seconds to wait while rendering HTML (default: 30).",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true",
         help="Show page count and estimated cost without processing.",
     )
@@ -278,9 +387,16 @@ def main():
         )
     if args.image_min_size is not None and not image_output:
         parser.error("--image-min-size requires image output (-o/--output-dir or --json --include-images)")
+    if args.html_timeout <= 0:
+        parser.error("--html-timeout must be greater than 0")
 
     if args.dry_run:
-        page_count = count_pages(args.document_source, args.pages)
+        page_count = count_pages(
+            args.document_source,
+            args.pages,
+            render_html=args.render_html,
+            html_timeout=args.html_timeout,
+        )
         cost = page_count * 0.002
         print(f"Pages: {page_count}")
         print(f"Estimated cost: ${cost:.4f}")
@@ -292,7 +408,12 @@ def main():
         sys.exit(1)
 
     client = Mistral(api_key=api_key)
-    document = build_document(client, args.document_source)
+    document = build_document(
+        client,
+        args.document_source,
+        render_html=args.render_html,
+        html_timeout=args.html_timeout,
+    )
     ocr_params = build_ocr_params(args)
 
     logging.info("Processing document with Mistral OCR...")

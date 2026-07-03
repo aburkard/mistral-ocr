@@ -16,6 +16,9 @@ dependencies = [
     "pypdf",
 ]
 
+[project.optional-dependencies]
+html = ["playwright"]
+
 [project.scripts]
 mistral-ocr = "mistral_ocr:main"
 

@@ -10,6 +10,13 @@ A simple CLI to extract text from documents using the Mistral OCR API.
 pip install mistral-ocr-tool
 ```
 
+To render HTML files or pages before OCR, install the optional HTML support:
+
+```bash
+pip install "mistral-ocr-tool[html]"
+python -m playwright install chromium
+```
+
 Or install from source:
 
 ```bash
@@ -42,6 +49,12 @@ mistral-ocr https://example.com/document.pdf
 
 # Process a local file
 mistral-ocr ./invoice.pdf
+
+# Render a local HTML file to PDF before OCR
+mistral-ocr ./report.html
+
+# Render an HTML page URL to PDF before OCR
+mistral-ocr https://example.com/report
 
 # Pipe from stdin
 cat document.pdf | mistral-ocr -
@@ -82,10 +95,14 @@ mistral-ocr large-doc.pdf --dry-run
 | `--image-limit N` | Maximum number of images to extract; use `0` to disable image extraction |
 | `--image-min-size N` | Minimum image dimension in pixels |
 | `--model NAME` | Model override (default: `mistral-ocr-latest`) |
+| `--render-html MODE` | HTML rendering mode: `auto`, `always`, or `never` (default: `auto`) |
+| `--html-timeout N` | Seconds to wait while rendering HTML (default: `30`) |
 | `--dry-run` | Show page count and estimated cost without processing |
 | `-v, --verbose` | Enable verbose logging |
 
 Image extraction options require image output mode (`-o/--output-dir` or `--json --include-images`), except `--image-limit 0`, which is allowed in text-only mode to explicitly disable image extraction.
+
+HTML inputs are rendered to a temporary PDF with Chromium via Playwright before being sent to Mistral OCR. In `auto` mode, local `.html`/`.htm` files and URLs with `Content-Type: text/html` are rendered; other URLs are passed directly to Mistral.
 
 ## Development
 
