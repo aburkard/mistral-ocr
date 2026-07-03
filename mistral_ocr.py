@@ -247,11 +247,11 @@ def main():
     )
     parser.add_argument(
         "--image-limit", type=int,
-        help="Maximum number of images to extract.",
+        help="Maximum number of images to extract; use 0 to disable images. Requires image output unless set to 0.",
     )
     parser.add_argument(
         "--image-min-size", type=int,
-        help="Minimum image dimension in pixels.",
+        help="Minimum image dimension in pixels. Requires image output.",
     )
     parser.add_argument(
         "--model", default="mistral-ocr-latest",
