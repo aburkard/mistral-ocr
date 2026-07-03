@@ -69,6 +69,7 @@ class TestBuildOcrParams:
         params = build_ocr_params(self._make_args())
         assert params["model"] == "mistral-ocr-latest"
         assert params["include_image_base64"] is False
+        assert params["image_limit"] == 0
         assert "pages" not in params
         assert "table_format" not in params
         assert "extract_header" not in params
@@ -90,6 +91,7 @@ class TestBuildOcrParams:
     def test_include_images(self):
         params = build_ocr_params(self._make_args(include_images=True))
         assert params["include_image_base64"] is True
+        assert "image_limit" not in params
 
     def test_image_limit(self):
         params = build_ocr_params(self._make_args(image_limit=5))
@@ -106,6 +108,7 @@ class TestBuildOcrParams:
     def test_output_dir_implies_include_images(self):
         params = build_ocr_params(self._make_args(output_dir="out/"))
         assert params["include_image_base64"] is True
+        assert "image_limit" not in params
 
 
 class TestMainOutput:
@@ -329,6 +332,35 @@ class TestIncludeImagesValidation:
         with pytest.raises(SystemExit):
             with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--include-images"]):
                 main()
+
+    def test_image_limit_without_image_output_errors(self):
+        with pytest.raises(SystemExit):
+            with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--image-limit", "5"]):
+                main()
+
+    def test_image_min_size_without_image_output_errors(self):
+        with pytest.raises(SystemExit):
+            with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--image-min-size", "100"]):
+                main()
+
+    @patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"})
+    @patch("mistral_ocr.Mistral")
+    def test_image_limit_zero_without_image_output_ok(self, mock_mistral_cls, capsys):
+        mock_client = MagicMock()
+        mock_mistral_cls.return_value = mock_client
+        page = MagicMock()
+        page.markdown = "text"
+        page.images = []
+        response = MagicMock()
+        response.pages = [page]
+        mock_client.ocr.process.return_value = response
+
+        with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--image-limit", "0"]):
+            main()
+
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "text"
+        assert mock_client.ocr.process.call_args.kwargs["image_limit"] == 0
 
     @patch.dict(os.environ, {"MISTRAL_API_KEY": "test-key"})
     @patch("mistral_ocr.Mistral")

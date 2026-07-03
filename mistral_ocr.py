@@ -178,6 +178,8 @@ def build_ocr_params(args):
         "model": args.model,
         "include_image_base64": include_images,
     }
+    if not include_images and args.image_limit is None:
+        params["image_limit"] = 0
     if args.pages is not None:
         params["pages"] = parse_pages(args.pages)
     if args.table_format is not None:
@@ -245,11 +247,11 @@ def main():
     )
     parser.add_argument(
         "--image-limit", type=int,
-        help="Maximum number of images to extract.",
+        help="Maximum number of images to extract; use 0 to disable images. Requires image output unless set to 0.",
     )
     parser.add_argument(
         "--image-min-size", type=int,
-        help="Minimum image dimension in pixels.",
+        help="Minimum image dimension in pixels. Requires image output.",
     )
     parser.add_argument(
         "--model", default="mistral-ocr-latest",
@@ -268,6 +270,14 @@ def main():
 
     if args.include_images and not args.output_json and not args.output_dir:
         parser.error("--include-images requires --json or -o/--output-dir")
+    image_output = args.include_images or args.output_dir is not None
+    if args.image_limit not in (None, 0) and not image_output:
+        parser.error(
+            "--image-limit N requires image output (-o/--output-dir or --json --include-images); "
+            "use --image-limit 0 to disable images"
+        )
+    if args.image_min_size is not None and not image_output:
+        parser.error("--image-min-size requires image output (-o/--output-dir or --json --include-images)")
 
     if args.dry_run:
         page_count = count_pages(args.document_source, args.pages)

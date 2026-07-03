@@ -79,11 +79,13 @@ mistral-ocr large-doc.pdf --dry-run
 | `--extract-headers` | Include page headers |
 | `--extract-footers` | Include page footers |
 | `--include-images` | Include images (requires `--json` or `-o`) |
-| `--image-limit N` | Maximum number of images to extract |
+| `--image-limit N` | Maximum number of images to extract; use `0` to disable image extraction |
 | `--image-min-size N` | Minimum image dimension in pixels |
 | `--model NAME` | Model override (default: `mistral-ocr-latest`) |
 | `--dry-run` | Show page count and estimated cost without processing |
 | `-v, --verbose` | Enable verbose logging |
+
+Image extraction options require image output mode (`-o/--output-dir` or `--json --include-images`), except `--image-limit 0`, which is allowed in text-only mode to explicitly disable image extraction.
 
 ## Development
 
