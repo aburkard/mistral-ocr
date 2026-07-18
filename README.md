@@ -62,8 +62,8 @@ mistral-ocr example.com/report
 # Pipe from stdin
 cat document.pdf | mistral-ocr -
 
-# Process specific pages only (0-indexed)
-mistral-ocr large-doc.pdf --pages 0,2,5
+# Process specific pages or inclusive ranges (0-indexed)
+mistral-ocr large-doc.pdf --pages 0,2-5
 
 # Output as JSON (great for piping to jq)
 mistral-ocr document.pdf --json | jq '.pages[0].markdown'
@@ -73,6 +73,9 @@ mistral-ocr document.pdf --table-format html
 
 # Include headers and footers
 mistral-ocr document.pdf --extract-headers --extract-footers
+
+# Preserve OCR 4 reading-order blocks, bounding boxes, and word confidence
+mistral-ocr document.pdf -o output/ --include-blocks --confidence-scores word
 
 # Save markdown and images to a directory
 mistral-ocr document.pdf -o output/
@@ -88,12 +91,14 @@ mistral-ocr large-doc.pdf --dry-run
 
 | Option | Description |
 |---|---|
-| `-p, --pages` | Comma-separated page numbers to process (0-indexed) |
+| `-p, --pages` | Comma-separated page numbers and inclusive ranges (0-indexed) |
 | `--json` | Output full JSON response instead of markdown |
 | `-o, --output-dir` | Save markdown and images to a directory |
 | `--table-format` | Table output format: `markdown` or `html` |
 | `--extract-headers` | Include page headers |
 | `--extract-footers` | Include page footers |
+| `--include-blocks` | Include OCR 4 structural blocks and bounding boxes |
+| `--confidence-scores` | Confidence granularity: `page` or `word` |
 | `--include-images` | Include images (requires `--json` or `-o`) |
 | `--image-limit N` | Maximum number of images to extract; use `0` to disable image extraction |
 | `--image-min-size N` | Minimum image dimension in pixels |
@@ -104,6 +109,8 @@ mistral-ocr large-doc.pdf --dry-run
 | `-v, --verbose` | Enable verbose logging |
 
 Image extraction options require image output mode (`-o/--output-dir` or `--json --include-images`), except `--image-limit 0`, which is allowed in text-only mode to explicitly disable image extraction.
+
+Output-directory mode writes both `<document>.md` and `<document>.json`. The JSON preserves blocks, confidence scores, tables, headers, footers, and other API metadata; extracted image base64 is replaced with an `image_path` to avoid duplicating image data.
 
 HTML inputs are rendered to a temporary PDF with Chromium via Playwright before being sent to Mistral OCR. In `auto` mode, local `.html`/`.htm` files and URLs with `Content-Type: text/html` are rendered; other URLs are passed directly to Mistral.
 
