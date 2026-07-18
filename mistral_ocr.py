@@ -39,6 +39,7 @@ DIRECT_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+OCR_PRICE_PER_PAGE = 0.004
 
 
 def looks_like_bare_url(source):
@@ -68,13 +69,24 @@ def normalize_document_source(source):
 
 
 def parse_pages(pages_str):
-    """Parse a comma-separated list of 0-indexed page numbers."""
+    """Parse comma-separated 0-indexed pages and inclusive ranges."""
     pages = []
     for part in pages_str.split(","):
         part = part.strip()
         if not part:
             continue
-        pages.append(int(part))
+        if "-" in part:
+            start_str, end_str = part.split("-", 1)
+            start = int(start_str)
+            end = int(end_str)
+            if start < 0 or end < start:
+                raise ValueError(f"Invalid page range: {part}")
+            pages.extend(range(start, end + 1))
+        else:
+            page = int(part)
+            if page < 0:
+                raise ValueError(f"Invalid page number: {part}")
+            pages.append(page)
     return pages
 
 
@@ -304,7 +316,7 @@ def get_doc_stem(source):
 
 
 def save_to_directory(output_dir, response, doc_stem):
-    """Save OCR response to a directory with markdown and image files."""
+    """Save OCR response to a directory with markdown, metadata, and images."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -336,8 +348,22 @@ def save_to_directory(output_dir, response, doc_stem):
         parts.append(md)
 
     md_path = out / f"{doc_stem}.md"
-    md_path.write_text("\n\n".join(parts))
+    md_path.write_text("\n\n".join(parts), encoding="utf-8")
     logging.info(f"Saved markdown: {md_path}")
+
+    response_data = response.model_dump(mode="json")
+    for page in response_data.get("pages", []):
+        for img in page.get("images") or []:
+            image_id = img.get("id")
+            if image_id in image_map:
+                img["image_base64"] = None
+                img["image_path"] = image_map[image_id]
+    json_path = out / f"{doc_stem}.json"
+    json_path.write_text(
+        json.dumps(response_data, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+    logging.info(f"Saved structured response: {json_path}")
 
     return md_path
 
@@ -363,6 +389,10 @@ def build_ocr_params(args):
         params["image_limit"] = args.image_limit
     if args.image_min_size is not None:
         params["image_min_size"] = args.image_min_size
+    if args.include_blocks:
+        params["include_blocks"] = True
+    if args.confidence_scores is not None:
+        params["confidence_scores_granularity"] = args.confidence_scores
     return params
 
 
@@ -375,7 +405,7 @@ def main():
                "  mistral-ocr document.pdf\n"
                "  mistral-ocr https://example.com/doc.pdf\n"
                "  mistral-ocr example.com/report\n"
-               "  mistral-ocr doc.pdf --pages 0,2,5\n"
+               "  mistral-ocr doc.pdf --pages 0,2-5\n"
                "  mistral-ocr doc.pdf --json | jq '.pages[0].markdown'\n"
                "  mistral-ocr doc.pdf -o output/\n"
                "  mistral-ocr page.html\n"
@@ -396,7 +426,7 @@ def main():
     )
     parser.add_argument(
         "-p", "--pages",
-        help="Comma-separated list of page numbers to process (0-indexed).",
+        help="Comma-separated page numbers and inclusive ranges (0-indexed), e.g. 0,2-5.",
     )
     parser.add_argument(
         "--table-format", choices=["markdown", "html"],
@@ -409,6 +439,14 @@ def main():
     parser.add_argument(
         "--extract-footers", action="store_true",
         help="Include page footers in output.",
+    )
+    parser.add_argument(
+        "--include-blocks", action="store_true",
+        help="Include OCR 4 structural blocks and bounding boxes in JSON output.",
+    )
+    parser.add_argument(
+        "--confidence-scores", choices=["page", "word"],
+        help="Include OCR confidence scores at page or word granularity.",
     )
     parser.add_argument(
         "-o", "--output-dir",
@@ -451,6 +489,8 @@ def main():
 
     if args.include_images and not args.output_json and not args.output_dir:
         parser.error("--include-images requires --json or -o/--output-dir")
+    if (args.include_blocks or args.confidence_scores) and not args.output_json and not args.output_dir:
+        parser.error("--include-blocks and --confidence-scores require --json or -o/--output-dir")
     image_output = args.include_images or args.output_dir is not None
     if args.image_limit not in (None, 0) and not image_output:
         parser.error(
@@ -469,7 +509,7 @@ def main():
             render_html=args.render_html,
             html_timeout=args.html_timeout,
         )
-        cost = page_count * 0.002
+        cost = page_count * OCR_PRICE_PER_PAGE
         print(f"Pages: {page_count}")
         print(f"Estimated cost: ${cost:.4f}")
         return

@@ -69,6 +69,13 @@ class TestParsePages:
     def test_trailing_comma(self):
         assert parse_pages("0,2,") == [0, 2]
 
+    def test_inclusive_ranges(self):
+        assert parse_pages("0,2-5,8") == [0, 2, 3, 4, 5, 8]
+
+    def test_invalid_range_raises(self):
+        with pytest.raises(ValueError):
+            parse_pages("5-2")
+
     def test_invalid_raises(self):
         with pytest.raises(ValueError):
             parse_pages("abc")
@@ -172,6 +179,8 @@ class TestBuildOcrParams:
             "output_dir": None,
             "image_limit": None,
             "image_min_size": None,
+            "include_blocks": False,
+            "confidence_scores": None,
         }
         defaults.update(overrides)
         return MagicMock(**defaults)
@@ -215,6 +224,13 @@ class TestBuildOcrParams:
     def test_custom_model(self):
         params = build_ocr_params(self._make_args(model="mistral-ocr-2512"))
         assert params["model"] == "mistral-ocr-2512"
+
+    def test_ocr4_structural_metadata(self):
+        params = build_ocr_params(
+            self._make_args(include_blocks=True, confidence_scores="word")
+        )
+        assert params["include_blocks"] is True
+        assert params["confidence_scores_granularity"] == "word"
 
     def test_output_dir_implies_include_images(self):
         params = build_ocr_params(self._make_args(output_dir="out/"))
@@ -357,7 +373,7 @@ class TestDryRun:
 
         captured = capsys.readouterr()
         assert "Pages: 10" in captured.out
-        assert "Estimated cost: $0.0200" in captured.out
+        assert "Estimated cost: $0.0400" in captured.out
 
     def test_dry_run_with_pages(self, tmp_path, capsys):
         from pypdf import PdfWriter
@@ -373,7 +389,7 @@ class TestDryRun:
 
         captured = capsys.readouterr()
         assert "Pages: 3" in captured.out
-        assert "Estimated cost: $0.0060" in captured.out
+        assert "Estimated cost: $0.0120" in captured.out
 
 
 class TestGetDocStem:
@@ -405,6 +421,10 @@ class TestSaveToDirectory:
 
         response = MagicMock()
         response.pages = [page]
+        response.model_dump.return_value = {
+            "pages": [{"images": [{"id": "img-0.png", "image_base64": img_data}]}],
+            "model": "mistral-ocr-latest",
+        }
         return response
 
     def _mock_response_no_images(self):
@@ -414,6 +434,10 @@ class TestSaveToDirectory:
 
         response = MagicMock()
         response.pages = [page]
+        response.model_dump.return_value = {
+            "pages": [{"images": []}],
+            "model": "mistral-ocr-latest",
+        }
         return response
 
     def test_saves_markdown(self, tmp_path):
@@ -437,6 +461,14 @@ class TestSaveToDirectory:
         assert "](images/img-0.png)" in content
         assert "](img-0.png)" not in content
 
+    def test_saves_structured_response_without_duplicate_base64(self, tmp_path):
+        response = self._mock_response_with_images()
+        save_to_directory(str(tmp_path / "out"), response, "doc")
+        data = json.loads((tmp_path / "out" / "doc.json").read_text())
+        image = data["pages"][0]["images"][0]
+        assert image["image_base64"] is None
+        assert image["image_path"] == "images/img-0.png"
+
 
 class TestIncludeImagesValidation:
     def test_include_images_without_json_or_output_dir_errors(self):
@@ -447,6 +479,15 @@ class TestIncludeImagesValidation:
     def test_html_timeout_must_be_positive(self):
         with pytest.raises(SystemExit):
             with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--html-timeout", "0"]):
+                main()
+
+    @pytest.mark.parametrize("flag", ["--include-blocks", "--confidence-scores"])
+    def test_structural_metadata_requires_structured_output(self, flag):
+        argv = ["mistral-ocr", "https://example.com/doc.pdf", flag]
+        if flag == "--confidence-scores":
+            argv.append("word")
+        with pytest.raises(SystemExit):
+            with patch("sys.argv", argv):
                 main()
 
     def test_image_limit_without_image_output_errors(self):
@@ -469,6 +510,7 @@ class TestIncludeImagesValidation:
         page.images = []
         response = MagicMock()
         response.pages = [page]
+        response.model_dump.return_value = {"pages": [{"images": []}], "model": "m"}
         mock_client.ocr.process.return_value = response
 
         with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--image-limit", "0"]):
@@ -516,3 +558,4 @@ class TestIncludeImagesValidation:
         captured = capsys.readouterr()
         assert "doc.md" in captured.out
         assert (tmp_path / "result" / "doc.md").exists()
+        assert (tmp_path / "result" / "doc.json").exists()
