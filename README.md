@@ -112,7 +112,7 @@ Image extraction options require image output mode (`-o/--output-dir` or `--json
 
 Output-directory mode writes both `<document>.md` and `<document>.json`. The JSON preserves blocks, confidence scores, tables, headers, footers, and other API metadata; extracted image base64 is replaced with an `image_path` to avoid duplicating image data.
 
-HTML inputs are rendered to a temporary PDF with Chromium via Playwright before being sent to Mistral OCR. In `auto` mode, local `.html`/`.htm` files and URLs with `Content-Type: text/html` are rendered; other URLs are passed directly to Mistral.
+HTML inputs are rendered to a temporary PDF with Chromium via Playwright before being sent to Mistral OCR. In `auto` mode, local `.html`/`.htm` files and URLs with `Content-Type: text/html` are rendered. Other URLs are downloaded locally and uploaded to Mistral, avoiding failures when Mistral cannot fetch the source URL directly.
 
 ## Development
 

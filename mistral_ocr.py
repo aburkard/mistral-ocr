@@ -105,6 +105,25 @@ def upload_file(client, file_path, file_name=None):
     return {"type": "document_url", "document_url": signed.url}
 
 
+def download_and_upload_url(client, url):
+    """Download a remote document locally, then upload it to Mistral."""
+    req = Request(url, headers=URL_REQUEST_HEADERS)
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        with urlopen(req, timeout=30) as resp:
+            file_name = resp.headers.get_filename()
+            if not file_name:
+                file_name = Path(urlparse(resp.url).path).name or "document"
+            while chunk := resp.read(1024 * 1024):
+                tmp.write(chunk)
+        tmp.close()
+        logging.info(f"Downloaded remote document: {file_name}")
+        return upload_file(client, tmp.name, file_name=file_name)
+    finally:
+        tmp.close()
+        os.unlink(tmp.name)
+
+
 def build_document(client, source, render_html="auto", html_timeout=30):
     """Resolve a source (URL, file path, or '-' for stdin) into an API document dict."""
     source = normalize_document_source(source)
@@ -129,7 +148,7 @@ def build_document(client, source, render_html="auto", html_timeout=30):
         finally:
             os.unlink(tmp.name)
     elif is_url(source):
-        return {"type": "document_url", "document_url": source}
+        return download_and_upload_url(client, source)
     elif os.path.exists(source):
         logging.info(f"Uploading file: {source}...")
         return upload_file(client, source)

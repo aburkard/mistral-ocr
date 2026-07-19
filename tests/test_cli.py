@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from mistral_ocr import (
     is_url, looks_like_bare_url, normalize_document_source, is_html_path,
     should_render_html, parse_pages, build_document, build_ocr_params,
-    count_pages, get_doc_stem, save_to_directory, main,
+    count_pages, download_and_upload_url, get_doc_stem, save_to_directory, main,
 )
 
 
@@ -122,8 +123,41 @@ class TestHtmlRendering:
             assert should_render_html("news.ycombinator.com", "auto") is True
 
     def test_build_document_accepts_bare_url(self):
-        document = build_document(MagicMock(), "espn.com", render_html="never")
-        assert document == {"type": "document_url", "document_url": "https://espn.com"}
+        client = MagicMock()
+        with patch(
+            "mistral_ocr.download_and_upload_url",
+            return_value={"type": "document_url", "document_url": "signed"},
+        ) as mock_download:
+            document = build_document(client, "espn.com", render_html="never")
+
+        mock_download.assert_called_once_with(client, "https://espn.com")
+        assert document == {"type": "document_url", "document_url": "signed"}
+
+    def test_downloads_remote_document_before_upload(self):
+        response = MagicMock()
+        response.headers.get_filename.return_value = "paper.pdf"
+        response.read.side_effect = [b"PDF contents", b""]
+        response.__enter__.return_value = response
+
+        uploaded_content = None
+
+        def mock_upload(client, path, file_name=None):
+            nonlocal uploaded_content
+            uploaded_content = Path(path).read_bytes()
+            return {"type": "document_url", "document_url": "signed"}
+
+        with patch("mistral_ocr.urlopen", return_value=response):
+            with patch(
+                "mistral_ocr.upload_file",
+                side_effect=mock_upload,
+            ) as mock_upload:
+                document = download_and_upload_url(MagicMock(), "https://example.com/paper")
+
+        uploaded_path = mock_upload.call_args.args[1]
+        assert not os.path.exists(uploaded_path)
+        assert uploaded_content == b"PDF contents"
+        assert mock_upload.call_args.kwargs["file_name"] == "paper.pdf"
+        assert document == {"type": "document_url", "document_url": "signed"}
 
     def test_build_document_renders_html_before_upload(self, tmp_path):
         html_path = tmp_path / "report.html"
@@ -143,8 +177,12 @@ class TestHtmlRendering:
         assert not pdf_path.exists()
 
     def test_build_document_can_skip_html_rendering(self):
-        document = build_document(MagicMock(), "https://example.com/report.html", render_html="never")
-        assert document == {"type": "document_url", "document_url": "https://example.com/report.html"}
+        with patch(
+            "mistral_ocr.download_and_upload_url",
+            return_value={"type": "document_url", "document_url": "signed"},
+        ):
+            document = build_document(MagicMock(), "https://example.com/report.html", render_html="never")
+        assert document == {"type": "document_url", "document_url": "signed"}
 
     def test_count_pages_for_rendered_html(self, tmp_path):
         from pypdf import PdfWriter
@@ -239,6 +277,14 @@ class TestBuildOcrParams:
 
 
 class TestMainOutput:
+    @pytest.fixture(autouse=True)
+    def mock_remote_download(self):
+        with patch(
+            "mistral_ocr.download_and_upload_url",
+            return_value={"type": "document_url", "document_url": "signed"},
+        ):
+            yield
+
     def _mock_response(self):
         page1 = MagicMock()
         page1.markdown = "# Page 1\nHello"
@@ -471,6 +517,14 @@ class TestSaveToDirectory:
 
 
 class TestIncludeImagesValidation:
+    @pytest.fixture(autouse=True)
+    def mock_remote_download(self):
+        with patch(
+            "mistral_ocr.download_and_upload_url",
+            return_value={"type": "document_url", "document_url": "signed"},
+        ):
+            yield
+
     def test_include_images_without_json_or_output_dir_errors(self):
         with pytest.raises(SystemExit):
             with patch("sys.argv", ["mistral-ocr", "https://example.com/doc.pdf", "--include-images"]):
